@@ -1,4 +1,30 @@
-# FRED EPP API Documentation
+# FRED WHMCS Domain Registrar Module
+
+## Installation
+
+1. Download `fred-whmcs-v1.4.zip` from the [v1.4 release](https://github.com/AFRICORE-TECH-SOLUTIONS-COMPANY-LIMITED/fred/releases/tag/v1.4) once the package has been published.
+2. Extract the ZIP into the root of your WHMCS installation. If you extract it locally, upload the resulting `modules/registrars/fred/` directory to the same path in WHMCS. Confirm that `fred.php` is at `<whmcs-root>/modules/registrars/fred/fred.php`.
+3. In WHMCS admin, open **Configuration → System Settings → Domain Registrars**, activate **Fred**, and configure its **API Endpoint** and **API Key**. The gateway must allow requests from your WHMCS server's IP address.
+
+## Release packages
+
+Publishing a GitHub Release triggers the **Package FRED release** workflow. It checks out the release tag, lints the production PHP files, and verifies the ZIP before attaching it to that release. The archive contains the module's PHP files, Smarty templates, logo, and runtime library files under `modules/registrars/fred/`.
+
+Tags use the `v1.4` or `v1.4.1` format, with optional prerelease suffixes such as `-rc.1`. The package name includes the full tag. The direct download URL format is:
+
+```text
+https://github.com/AFRICORE-TECH-SOLUTIONS-COMPANY-LIMITED/fred/releases/download/{version}/fred-whmcs-{version}.zip
+```
+
+To package an already published release, dispatch the workflow from the default branch and pass the release tag as the `version` input. For v1.4, run:
+
+```bash
+gh workflow run release.yml --repo AFRICORE-TECH-SOLUTIONS-COMPANY-LIMITED/fred --ref main -f version=v1.4
+```
+
+A rebuild replaces the asset of the same name. GitHub requires the release to allow asset changes. Replacement deletes the old asset before uploading the new one.
+
+## FRED EPP API Documentation
 
 ## Overview
 

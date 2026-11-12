@@ -1,0 +1,106 @@
+name: Package FRED release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing GitHub Release tag (for example, v1.4)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fred-release-${{ github.event.release.tag_name || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Validate release tag
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$ ]]; then
+            echo "::error::Expected a version tag such as v1.4, v1.4.1, or v1.4.1-rc.1."
+            exit 1
+          fi
+          printf 'tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Lint, package, and verify module
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          export LC_ALL=C
+          prefix=modules/registrars/fred
+          staging=$(mktemp -d)
+          trap 'rm -rf -- "$staging"' EXIT
+          archive="$RUNNER_TEMP/fred-whmcs-${RELEASE_TAG}.zip"
+
+          git ls-files -z -- ':(top,glob)*.php' ':(top,glob)*.tpl' \
+            ':(top,glob)lib/**/*.php' ':(top,glob)lib/**/*.tpl' logo.png \
+            > "$staging/source-files"
+          while IFS= read -r -d '' file; do
+            if [[ ! -f "$file" || -L "$file" || ! "$file" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+              echo "::error::Invalid runtime file in release checkout."
+              exit 1
+            fi
+            if [[ "$file" == *.php ]]; then
+              php -l "$file"
+            fi
+            install -D -m 0644 -- "$file" "$staging/$prefix/$file"
+            printf '%s/%s\n' "$prefix" "$file" >> "$staging/manifest"
+          done < "$staging/source-files"
+
+          for required in fred.php hooks.php inventory-sync.php zone-sync.php \
+            childnameservers.tpl dnssecpage.tpl eppcodepage.tpl logo.png \
+            lib/ApiClient.php lib/InventoryExporter.php; do
+            if [[ ! -s "$staging/$prefix/$required" ]]; then
+              echo "::error::Missing or empty required module file: $required"
+              exit 1
+            fi
+          done
+
+          rm -f -- "$archive"
+          (
+            cd "$staging"
+            zip -X "$archive" -@ < manifest
+          )
+          unzip -t "$archive"
+          unzip -Z -1 "$archive" | sort > "$staging/archive-files"
+          sort "$staging/manifest" > "$staging/expected-files"
+          diff -u "$staging/expected-files" "$staging/archive-files"
+          printf 'archive=%s\n' "$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ZIP to matching release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          if ! published_tag=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName'); then
+            echo "::error::Could not find the GitHub Release for $RELEASE_TAG."
+            exit 1
+          fi
+          if [[ "$published_tag" != "$RELEASE_TAG" ]]; then
+            echo "::error::Expected a published GitHub Release for $RELEASE_TAG."
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "$ARCHIVE" --repo "$GITHUB_REPOSITORY" --clobber
